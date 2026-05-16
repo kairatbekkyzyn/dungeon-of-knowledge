@@ -123,14 +123,8 @@ async def get_leaderboard(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
 ):
-    """
-    Returns ranked list of users.
-    scope=global → everyone | scope=friends → only friends + self
-    period=week  → XP earned in last 7 days (approximated via quiz attempts)
-    """
     friend_set = await _friend_ids(db, me.id)
 
-    # Build per-user correct/total from quiz_attempts
     stmt = (
         select(
             User.id,
@@ -144,7 +138,7 @@ async def get_leaderboard(
             ).label("correct_answers"),
         )
         .outerjoin(QuizAttempt, QuizAttempt.user_id == User.id)
-        .where(User.is_verified == True)  
+        .where(User.is_verified == True)
         .group_by(User.id)
         .order_by(desc(User.xp), User.name, User.id)
         .limit(limit)
@@ -189,7 +183,7 @@ async def get_my_rank(
                     User.xp > me.xp,
                     and_(
                         User.xp == me.xp,
-                        func.lower(User.name) < func.lower(me.name)  # Case-insensitive alphabetical
+                        func.lower(User.name) < func.lower(me.name)
                     )
                 ),
                 User.is_verified == True
@@ -210,7 +204,6 @@ async def get_public_profile(
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # badges
     badge_res = await db.execute(
         select(Badge, UserBadge.earned_at)
         .join(UserBadge, UserBadge.badge_id == Badge.id)
@@ -222,7 +215,6 @@ async def get_public_profile(
         for b, ea in badge_res.all()
     ]
 
-    # quiz stats
     stats_res = await db.execute(
         select(
             func.count(QuizAttempt.id),
@@ -233,7 +225,6 @@ async def get_public_profile(
     total   = total   or 0
     correct = int(correct or 0)
 
-    # friendship status
     fs_res = await db.execute(
         select(Friendship).where(
             or_(
@@ -319,19 +310,25 @@ async def list_pending_requests(
         )
     )
     requests = result.scalars().all()
-    out = []
-    for req in requests:
-        u_res = await db.execute(select(User).where(User.id == req.requester_id))
-        u = u_res.scalar_one_or_none()
-        out.append({
+    if not requests:
+        return []
+
+    # FIX: single bulk query for all requesters instead of one per request
+    requester_ids = [req.requester_id for req in requests]
+    users_res = await db.execute(select(User).where(User.id.in_(requester_ids)))
+    users = {u.id: u for u in users_res.scalars().all()}
+
+    return [
+        {
             "id": req.id,
             "requester_id": req.requester_id,
-            "requester_name": u.name if u else "Unknown",
+            "requester_name": users[req.requester_id].name if req.requester_id in users else "Unknown",
             "addressee_id": req.addressee_id,
             "status": req.status,
             "created_at": str(req.created_at),
-        })
-    return out
+        }
+        for req in requests
+    ]
 
 
 @router.post("/friends/request/{addressee_id}")
@@ -343,12 +340,10 @@ async def send_friend_request(
     if addressee_id == me.id:
         raise HTTPException(400, "Can't friend yourself")
 
-    # Check addressee exists
     res = await db.execute(select(User).where(User.id == addressee_id))
     if not res.scalar_one_or_none():
         raise HTTPException(404, "User not found")
 
-    # Check existing
     existing = await db.execute(
         select(Friendship).where(
             or_(
@@ -422,7 +417,6 @@ async def search_users(
     users = result.scalars().all()
     friend_set = await _friend_ids(db, me.id)
 
-    # also get pending requests
     pending_res = await db.execute(
         select(Friendship).where(
             or_(
@@ -442,7 +436,7 @@ async def search_users(
         if uid in friend_set:
             return "friends"
         if k1 in pending:
-            return pending[k1]  # pending / rejected
+            return pending[k1]
         if k2 in pending:
             return pending[k2]
         return None
@@ -475,16 +469,26 @@ async def list_competitions(
     stmt = stmt.order_by(desc(Competition.created_at)).limit(30)
     result = await db.execute(stmt)
     comps = result.scalars().all()
+    if not comps:
+        return []
+
+    # FIX: single query for all creator users instead of one per competition
+    creator_ids = list({c.creator_id for c in comps})
+    creators_res = await db.execute(select(User).where(User.id.in_(creator_ids)))
+    creators = {u.id: u for u in creators_res.scalars().all()}
+
+    # FIX: single query for participant counts instead of one per competition
+    comp_ids = [c.id for c in comps]
+    counts_res = await db.execute(
+        select(CompetitionParticipant.competition_id, func.count(CompetitionParticipant.id))
+        .where(CompetitionParticipant.competition_id.in_(comp_ids))
+        .group_by(CompetitionParticipant.competition_id)
+    )
+    participant_counts = {row[0]: row[1] for row in counts_res.all()}
 
     out = []
     for c in comps:
-        creator_res = await db.execute(select(User).where(User.id == c.creator_id))
-        creator = creator_res.scalar_one_or_none()
-        p_count_res = await db.execute(
-            select(func.count(CompetitionParticipant.id))
-            .where(CompetitionParticipant.competition_id == c.id)
-        )
-        p_count = p_count_res.scalar() or 0
+        creator = creators.get(c.creator_id)
         out.append(CompetitionOut(
             id=c.id,
             title=c.title,
@@ -494,7 +498,7 @@ async def list_competitions(
             status=c.status,
             max_players=c.max_players,
             duration_s=c.duration_s,
-            participant_count=p_count,
+            participant_count=participant_counts.get(c.id, 0),
             starts_at=c.starts_at,
             created_at=c.created_at,
         ))
@@ -507,7 +511,6 @@ async def create_competition(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
 ):
-    # Generate unique join code
     join_code = secrets.token_hex(4).upper()
     
     c = Competition(
@@ -516,18 +519,16 @@ async def create_competition(
         material_id=body.material_id,
         max_players=body.max_players,
         duration_s=body.duration_s,
-        join_code=join_code,  # Add this
+        join_code=join_code,
     )
     db.add(c)
     await db.flush()
     
-    # auto-join creator
     p = CompetitionParticipant(competition_id=c.id, user_id=me.id)
     db.add(p)
     await db.commit()
     await db.refresh(c)
     
-    # Return with join_code
     return {
         "id": c.id, 
         "title": c.title, 
@@ -540,7 +541,7 @@ async def create_competition(
         "participant_count": 1,
         "starts_at": c.starts_at, 
         "created_at": c.created_at,
-        "join_code": join_code,  # Add this
+        "join_code": join_code,
     }
 
 
@@ -557,7 +558,6 @@ async def join_competition(
     if c.status != "open":
         raise HTTPException(400, "Competition is not open for joining")
 
-    # already joined?
     ep = await db.execute(
         select(CompetitionParticipant).where(
             and_(CompetitionParticipant.competition_id == comp_id,
@@ -567,7 +567,6 @@ async def join_competition(
     if ep.scalar_one_or_none():
         raise HTTPException(400, "Already joined")
 
-    # check capacity
     count_res = await db.execute(
         select(func.count(CompetitionParticipant.id))
         .where(CompetitionParticipant.competition_id == comp_id)
@@ -622,13 +621,12 @@ async def submit_score(
     if not p:
         raise HTTPException(400, "Not a participant")
 
-    xp = body.score * 15  # 15 XP per correct answer in competition
+    xp = body.score * 15
     p.score = body.score
     p.total = body.total
     p.xp_earned = xp
     p.finished_at = datetime.utcnow()
 
-    # award XP to user
     me.xp += xp
     await db.commit()
     return {"xp_earned": xp, "score": body.score, "total": body.total}
@@ -650,17 +648,23 @@ async def competition_participants(
         .where(CompetitionParticipant.competition_id == comp_id)
     )
     participants = p_res.scalars().all()
+    if not participants:
+        return []
+
+    # FIX: single bulk query for all participant users instead of one per participant
+    user_ids = [p.user_id for p in participants]
+    users_res = await db.execute(select(User).where(User.id.in_(user_ids)))
+    users = {u.id: u for u in users_res.scalars().all()}
 
     rows = []
     for p in participants:
-        u_res = await db.execute(select(User).where(User.id == p.user_id))
-        u = u_res.scalar_one_or_none()
+        u = users.get(p.user_id)
         rows.append({
             "user_id": p.user_id,
             "name": u.name if u else "?",
             "rank": u.rank if u else "?",
             "score": p.score,
-            "answered": p.total,  # Change from 'total' to 'answered'
+            "answered": p.total,
             "total": p.total,
             "xp_earned": p.xp_earned,
             "finished_at": p.finished_at,
@@ -716,10 +720,14 @@ async def get_results(
     )
     participants = p_res.scalars().all()
 
+    # FIX: single bulk query for all result users instead of one per participant
+    user_ids = [p.user_id for p in participants]
+    users_res = await db.execute(select(User).where(User.id.in_(user_ids)))
+    users = {u.id: u for u in users_res.scalars().all()}
+
     rows = []
     for pos, p in enumerate(participants, 1):
-        u_res = await db.execute(select(User).where(User.id == p.user_id))
-        u = u_res.scalar_one_or_none()
+        u = users.get(p.user_id)
         rows.append({
             "position": pos,
             "user_id": p.user_id,
@@ -732,6 +740,7 @@ async def get_results(
             "finished_at": str(p.finished_at) if p.finished_at else None,
         })
     return {"competition": {"id": c.id, "title": c.title, "status": c.status}, "results": rows}
+
 
 @router.post("/competitions/join/{join_code}")
 async def join_competition_by_code(
@@ -747,7 +756,6 @@ async def join_competition_by_code(
     if c.status != "open":
         raise HTTPException(400, "Competition is not open for joining")
     
-    # Check if already joined
     ep = await db.execute(
         select(CompetitionParticipant).where(
             and_(CompetitionParticipant.competition_id == c.id,
@@ -757,7 +765,6 @@ async def join_competition_by_code(
     if ep.scalar_one_or_none():
         raise HTTPException(400, "Already joined")
     
-    # Check capacity
     count_res = await db.execute(
         select(func.count(CompetitionParticipant.id))
         .where(CompetitionParticipant.competition_id == c.id)

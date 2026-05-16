@@ -14,7 +14,6 @@ async def _update_mastery(db: AsyncSession, user_id: int, material_id: int, topi
     """Recalculate and save mastery for a topic after each answer.
     
     Mastery = unique questions answered correctly / total questions in topic.
-    This means 5/5 = 100%, not inflated by retries.
     """
     result = await db.execute(
         select(TopicMastery).where(
@@ -36,7 +35,6 @@ async def _update_mastery(db: AsyncSession, user_id: int, material_id: int, topi
         )
         db.add(m)
 
-    # Count total questions in this topic
     total_q_result = await db.execute(
         select(func.count(Question.id)).where(
             Question.material_id == material_id,
@@ -45,7 +43,6 @@ async def _update_mastery(db: AsyncSession, user_id: int, material_id: int, topi
     )
     total_questions = total_q_result.scalar() or 0
 
-    # Count UNIQUE questions the user has answered correctly at least once
     correct_q_result = await db.execute(
         select(func.count(func.distinct(QuizAttempt.question_id))).where(
             QuizAttempt.user_id == user_id,
@@ -60,12 +57,10 @@ async def _update_mastery(db: AsyncSession, user_id: int, material_id: int, topi
     )
     unique_correct = correct_q_result.scalar() or 0
 
-    # Track total attempts for state logic (still useful)
     m.total = (m.total or 0) + 1
     m.correct = unique_correct
     m.mastery = round(unique_correct / total_questions, 3) if total_questions > 0 else 0.0
 
-    # State: mastered when all questions answered correctly
     if unique_correct >= total_questions and total_questions > 0:
         m.state = 'mastered'
     elif unique_correct > 0:
@@ -117,61 +112,74 @@ async def list_dungeons(
         .order_by(Material.dungeon_order, Material.created_at)
     )
     materials = mats_result.scalars().all()
+    if not materials:
+        return []
+
+    material_ids = [m.id for m in materials]
+
+    # FIX: single query for all topics across all materials
+    q_result = await db.execute(
+        select(Question.material_id, Question.topic, func.count(Question.id))
+        .where(Question.material_id.in_(material_ids))
+        .group_by(Question.material_id, Question.topic)
+    )
+    # {material_id: {topic: count}}
+    topic_counts: dict = defaultdict(dict)
+    for mat_id, topic, count in q_result.all():
+        topic_counts[mat_id][topic] = count
+
+    # FIX: single query for all mastery records across all materials
+    mastery_result = await db.execute(
+        select(TopicMastery).where(
+            TopicMastery.user_id == current_user.id,
+            TopicMastery.material_id.in_(material_ids),
+        )
+    )
+    # {material_id: {topic: mastery_obj}}
+    mastery_map: dict = defaultdict(dict)
+    for m in mastery_result.scalars().all():
+        mastery_map[m.material_id][m.topic] = m
+
+    # FIX: single query for all correctly-answered question IDs across all materials
+    all_question_ids_res = await db.execute(
+        select(Question.id, Question.material_id, Question.topic)
+        .where(Question.material_id.in_(material_ids))
+    )
+    # {material_id: {topic: [question_ids]}}
+    mat_topic_qids: dict = defaultdict(lambda: defaultdict(list))
+    for qid, mid, topic in all_question_ids_res.all():
+        mat_topic_qids[mid][topic].append(qid)
+
+    all_qids = [qid for mid in mat_topic_qids for topic in mat_topic_qids[mid] for qid in mat_topic_qids[mid][topic]]
+    correct_res = await db.execute(
+        select(QuizAttempt.question_id)
+        .where(
+            QuizAttempt.user_id == current_user.id,
+            QuizAttempt.is_correct == True,
+            QuizAttempt.question_id.in_(all_qids),
+        )
+        .distinct()
+    )
+    correctly_answered = {row[0] for row in correct_res.all()}
 
     dungeons = []
     for mat in materials:
-        # Get all topics for this material
-        q_result = await db.execute(
-            select(Question.topic)
-            .where(Question.material_id == mat.id)
-            .distinct()
-        )
-        topics = [r[0] for r in q_result.all()]
-
-        # Get mastery per topic
-        mastery_result = await db.execute(
-            select(TopicMastery).where(
-                TopicMastery.user_id == current_user.id,
-                TopicMastery.material_id == mat.id,
-            )
-        )
-        mastery_map = {m.topic: m for m in mastery_result.scalars().all()}
-
+        topics_for_mat = topic_counts.get(mat.id, {})
         rooms = []
-        for t in topics:
-            # Get question count for this topic
-            q_count_result = await db.execute(
-                select(func.count(Question.id)).where(
-                    Question.material_id == mat.id,
-                    Question.topic == t,
-                )
-            )
-            q_count = q_count_result.scalar() or 0
-
-            # Count unique correctly answered questions
-            correct_result = await db.execute(
-                select(func.count(func.distinct(QuizAttempt.question_id))).where(
-                    QuizAttempt.user_id == current_user.id,
-                    QuizAttempt.is_correct == True,
-                    QuizAttempt.question_id.in_(
-                        select(Question.id).where(
-                            Question.material_id == mat.id,
-                            Question.topic == t,
-                        )
-                    )
-                )
-            )
-            unique_correct = correct_result.scalar() or 0
+        for topic, q_count in topics_for_mat.items():
+            qids_for_topic = mat_topic_qids[mat.id][topic]
+            unique_correct = sum(1 for qid in qids_for_topic if qid in correctly_answered)
             mastery_value = round(unique_correct / q_count, 3) if q_count > 0 else 0.0
 
-            state = "locked"
             if unique_correct >= q_count and q_count > 0:
                 state = "mastered"
             elif unique_correct > 0:
                 state = "in_progress"
+            else:
+                state = "locked"
 
             rooms.append({
-                "topic": t,
+                "topic": topic,
                 "mastery": mastery_value,
                 "question_count": q_count,
                 "state": state,
@@ -212,7 +220,7 @@ async def get_rooms(
     if not mat:
         raise HTTPException(status_code=404, detail="Dungeon not found.")
 
-    # Get question count per topic
+    # Question count per topic
     q_result = await db.execute(
         select(Question.topic, func.count(Question.id))
         .where(Question.material_id == material_id)
@@ -220,7 +228,7 @@ async def get_rooms(
     )
     topic_counts = {row[0]: row[1] for row in q_result.all()}
 
-    # Get mastery per topic
+    # Mastery per topic
     mastery_result = await db.execute(
         select(TopicMastery).where(
             TopicMastery.user_id == current_user.id,
@@ -229,27 +237,36 @@ async def get_rooms(
     )
     mastery_map = {m.topic: m for m in mastery_result.scalars().all()}
 
+    # FIX: single query for all question IDs + their topics
+    qids_result = await db.execute(
+        select(Question.id, Question.topic)
+        .where(Question.material_id == material_id)
+    )
+    topic_qids: dict = defaultdict(list)
+    all_qids = []
+    for qid, topic in qids_result.all():
+        topic_qids[topic].append(qid)
+        all_qids.append(qid)
+
+    # FIX: single query for all correctly answered question IDs
+    correct_res = await db.execute(
+        select(QuizAttempt.question_id)
+        .where(
+            QuizAttempt.user_id == current_user.id,
+            QuizAttempt.is_correct == True,
+            QuizAttempt.question_id.in_(all_qids),
+        )
+        .distinct()
+    )
+    correctly_answered = {row[0] for row in correct_res.all()}
+
     rooms = []
     for topic, count in topic_counts.items():
         m = mastery_map.get(topic)
-
-        # Recompute mastery correctly: unique correct / total questions
-        correct_q_result = await db.execute(
-            select(func.count(func.distinct(QuizAttempt.question_id))).where(
-                QuizAttempt.user_id == current_user.id,
-                QuizAttempt.is_correct == True,
-                QuizAttempt.question_id.in_(
-                    select(Question.id).where(
-                        Question.material_id == material_id,
-                        Question.topic == topic,
-                    )
-                )
-            )
-        )
-        unique_correct = correct_q_result.scalar() or 0
+        qids_for_topic = topic_qids[topic]
+        unique_correct = sum(1 for qid in qids_for_topic if qid in correctly_answered)
         mastery_value = round(unique_correct / count, 3) if count > 0 else 0.0
 
-        # Determine state
         if unique_correct >= count and count > 0:
             state = "mastered"
         elif unique_correct > 0:
@@ -266,22 +283,13 @@ async def get_rooms(
             "state": state,
         })
 
-    # Sort rooms
     rooms.sort(key=lambda x: x["topic"])
 
-    # NEW: Calculate which rooms are accessible based on previous room mastery >= 0.7
-    accessible_rooms = []
     for i, room in enumerate(rooms):
         if i == 0:
-            # First room always accessible
             room["accessible"] = True
         else:
-            # Check if previous room has mastery >= 70%
-            prev_room = rooms[i - 1]
-            prev_mastery = prev_room["mastery"]
-            room["accessible"] = prev_mastery >= 0.7
-        
-        # Override if room is already mastered
+            room["accessible"] = rooms[i - 1]["mastery"] >= 0.7
         if room["state"] == "mastered":
             room["accessible"] = True
 
@@ -343,6 +351,7 @@ async def get_monster_log(
         for row in rows
     ]
 
+
 @router.get("/{material_id}/rooms/progress")
 async def get_room_progress(
     material_id: int,
@@ -356,33 +365,20 @@ async def get_room_progress(
         select(Question).where(Question.material_id == material_id)
     )
     questions = questions_result.scalars().all()
-    
-    # Get mastery records
-    mastery_result = await db.execute(
-        select(TopicMastery).where(
-            TopicMastery.user_id == current_user.id,
-            TopicMastery.material_id == material_id,
+    question_ids = [q.id for q in questions]
+
+    # FIX: single bulk query instead of one per question
+    correct_res = await db.execute(
+        select(QuizAttempt.question_id)
+        .where(
+            QuizAttempt.user_id == current_user.id,
+            QuizAttempt.is_correct == True,
+            QuizAttempt.question_id.in_(question_ids),
         )
+        .distinct()
     )
-    masteries = {m.topic: m for m in mastery_result.scalars().all()}
-    
-    # Get correctly answered question IDs from quiz attempts
-    correct_question_ids = set()
-    for question in questions:
-        # FIX: Add .limit(1) and use .first()
-        attempt_result = await db.execute(
-            select(QuizAttempt)
-            .where(
-                QuizAttempt.user_id == current_user.id,
-                QuizAttempt.question_id == question.id,
-                QuizAttempt.is_correct == True
-            )
-            .limit(1)  # Add this
-        )
-        if attempt_result.first():  # Use .first() instead of scalar_one_or_none()
-            correct_question_ids.add(question.id)
-    
-    # Group by topic
+    correct_question_ids = {row[0] for row in correct_res.all()}
+
     room_progress = {}
     for question in questions:
         if question.topic not in room_progress:
@@ -396,6 +392,7 @@ async def get_room_progress(
     
     return room_progress
 
+
 @router.get("/{material_id}/topics/{topic}/summary")
 async def get_topic_summary(
     material_id: int,
@@ -403,11 +400,10 @@ async def get_topic_summary(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Get a PROPER topic summary with AI-generated key terms and definitions."""
+    """Get a topic summary with AI-generated key terms and definitions."""
     
     import re
     
-    # Get the material content
     mat_result = await db.execute(
         select(Material).where(
             Material.id == material_id,
@@ -418,7 +414,6 @@ async def get_topic_summary(
     if not material:
         raise HTTPException(status_code=404, detail="Material not found")
     
-    # Get all questions for this topic
     questions_result = await db.execute(
         select(Question).where(
             Question.material_id == material_id,
@@ -427,27 +422,24 @@ async def get_topic_summary(
         )
     )
     questions = questions_result.scalars().all()
-    
-    # Count mastered questions
-    mastered_count = 0
-    for q in questions:
-        # FIX: Add .limit(1) and use .first() instead of scalar_one_or_none()
-        correct_attempt = await db.execute(
-            select(QuizAttempt)
-            .where(
-                QuizAttempt.user_id == current_user.id,
-                QuizAttempt.question_id == q.id,
-                QuizAttempt.is_correct == True
-            )
-            .limit(1)  # Add this to prevent MultipleResultsFound
+    question_ids = [q.id for q in questions]
+
+    # FIX: single bulk query instead of one per question
+    correct_res = await db.execute(
+        select(QuizAttempt.question_id)
+        .where(
+            QuizAttempt.user_id == current_user.id,
+            QuizAttempt.is_correct == True,
+            QuizAttempt.question_id.in_(question_ids),
         )
-        if correct_attempt.first():  # Use .first() instead of scalar_one_or_none()
-            mastered_count += 1
+        .distinct()
+    )
+    correct_ids = {row[0] for row in correct_res.all()}
+    mastered_count = len(correct_ids)
     
     total_questions = len(questions)
     mastery_percentage = (mastered_count / total_questions * 100) if total_questions > 0 else 0
     
-    # Extract content related to this topic
     content = material.content
     topic_lower = topic.lower()
     content_lower = content.lower()
@@ -460,22 +452,14 @@ async def get_topic_summary(
     else:
         raw_content = content[:1200]
     
-    # CLEAN THE TEXT - Remove excessive line breaks, fix formatting
-    # Replace multiple newlines with single newline
     cleaned = re.sub(r'\n\s*\n', '\n\n', raw_content)
-    # Remove line breaks that split sentences (replace \n with space when it's in the middle of a sentence)
     cleaned = re.sub(r'(?<![.!?])\n(?![0-9])', ' ', cleaned)
-    # Remove extra spaces
     cleaned = re.sub(r' +', ' ', cleaned)
-    # Remove spaces before punctuation
     cleaned = re.sub(r' \.', '.', cleaned)
     cleaned = re.sub(r' ,', ',', cleaned)
-    # Split into paragraphs
     paragraphs = [p.strip() for p in cleaned.split('\n\n') if p.strip()]
-    # Take first 3-4 paragraphs
     topic_content = '\n\n'.join(paragraphs[:4])
     
-    # Generate key terms using AI
     key_terms = []
     ai_summary = ""
     try:
@@ -485,7 +469,6 @@ async def get_topic_summary(
     except Exception as e:
         print(f"Error generating AI content: {e}")
     
-    # If AI fails, create simple fallback key terms
     if not key_terms:
         key_terms = [
             {"term": topic, "definition": f"Core concept of {topic}"},
@@ -493,10 +476,8 @@ async def get_topic_summary(
             {"term": "Important Concept", "definition": "Critical knowledge point"},
         ]
     
-    # Use AI summary if available, otherwise fall back to cleaned raw text
     final_content = ai_summary if ai_summary else topic_content
     
-    # Create a clean, student-friendly summary
     summary = f"""📚 Welcome to the {topic} room!
 
 🎯 What you'll learn:

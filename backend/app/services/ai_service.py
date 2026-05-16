@@ -9,6 +9,15 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL      = "llama-3.3-70b-versatile"
 GROQ_FAST_MODEL = "llama-3.1-8b-instant"
 
+# FIX: module-level singleton — avoids creating a new HTTP client on every call
+_groq_client: Optional[AsyncGroq] = None
+
+def _get_client() -> AsyncGroq:
+    global _groq_client
+    if _groq_client is None:
+        _groq_client = AsyncGroq(api_key=GROQ_API_KEY)
+    return _groq_client
+
 
 # ─────────────────────────────────────────────────────────────
 # Helper
@@ -18,7 +27,7 @@ def _clean(raw: str) -> str:
 
 
 async def _chat(prompt: str, system: str = "You are a JSON-only response system. Return only valid JSON.", fast: bool = True) -> str:
-    client = AsyncGroq(api_key=GROQ_API_KEY)
+    client = _get_client()  # FIX: reuse singleton instead of AsyncGroq(...) every call
     model  = GROQ_FAST_MODEL if fast else GROQ_MODEL
     resp   = await client.chat.completions.create(
         model=model,
@@ -417,7 +426,7 @@ async def get_ai_recommendation(weak_topics: list[dict]) -> str:
 async def analyze_material_topics(text: str, title: str, num_topics: int) -> dict:
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY not set.")
-    client = AsyncGroq(api_key=GROQ_API_KEY)
+    client = _get_client()  # FIX: reuse singleton
     prompt = f"""You are a study material analyzer. Analyze the following text and create a dungeon blueprint.
 
 Title: {title}
@@ -466,7 +475,7 @@ Return ONLY valid JSON, no markdown formatting."""
 async def generate_topic_summary(content: str, topic: str) -> str:
     if not GROQ_API_KEY:
         return ""
-    client = AsyncGroq(api_key=GROQ_API_KEY)
+    client = _get_client()  # FIX: reuse singleton
     prompt = f"""You are a helpful teacher summarizing study material for a student.
 
 Topic: "{topic}"
@@ -500,7 +509,7 @@ Return ONLY the summary text, nothing else."""
 async def generate_key_terms(content: str, topic: str) -> list:
     if not GROQ_API_KEY:
         return []
-    client = AsyncGroq(api_key=GROQ_API_KEY)
+    client = _get_client()  # FIX: reuse singleton
     prompt = f"""You are an expert teacher. Extract the 5 most important key terms from this text about "{topic}".
 
 Text:

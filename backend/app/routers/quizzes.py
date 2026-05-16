@@ -30,12 +30,22 @@ RANK_THRESHOLDS = [("Apprentice",0),("Knight",500),("Wizard",1500),("Archmage",5
 def get_rank(xp: int) -> str:
     return next((r for r,t in reversed(RANK_THRESHOLDS) if xp >= t), "Apprentice")
 
+# FIX: in-memory flag so we only seed badges once per process lifetime,
+# not on every single request to /quizzes/next and /quizzes/badges.
+_badges_seeded = False
+
 async def ensure_badges(db):
+    global _badges_seeded
+    if _badges_seeded:
+        return
+    # FIX: single query to get all existing badge keys instead of 7 individual queries
+    existing_res = await db.execute(select(Badge.key))
+    existing_keys = {row[0] for row in existing_res.all()}
     for b in BADGE_DEFS:
-        res = await db.execute(select(Badge).where(Badge.key==b["key"]))
-        if not res.scalar_one_or_none():
+        if b["key"] not in existing_keys:
             db.add(Badge(**b))
     await db.commit()
+    _badges_seeded = True
 
 async def check_badges(user, db, correct_total, attempt_total) -> list[str]:
     res = await db.execute(select(UserBadge,Badge).join(Badge).where(UserBadge.user_id==user.id))
@@ -43,14 +53,21 @@ async def check_badges(user, db, correct_total, attempt_total) -> list[str]:
     conditions = {"first_answer":attempt_total>=1,"correct_10":correct_total>=10,
                   "correct_50":correct_total>=50,"streak_3":user.streak_days>=3,
                   "streak_7":user.streak_days>=7,"attempts_100":attempt_total>=100}
+
+    keys_to_award = [key for key, met in conditions.items() if met and key not in earned]
+    if not keys_to_award:
+        return []
+
+    # FIX: single bulk query for all badges to award instead of one query per badge
+    badges_res = await db.execute(select(Badge).where(Badge.key.in_(keys_to_award)))
+    badges_to_award = badges_res.scalars().all()
+
     new = []
-    for key, met in conditions.items():
-        if met and key not in earned:
-            br = await db.execute(select(Badge).where(Badge.key==key))
-            badge = br.scalar_one_or_none()
-            if badge:
-                db.add(UserBadge(user_id=user.id, badge_id=badge.id)); new.append(badge.name)
-    await db.commit(); return new
+    for badge in badges_to_award:
+        db.add(UserBadge(user_id=user.id, badge_id=badge.id))
+        new.append(badge.name)
+    await db.commit()
+    return new
 
 def update_streak(user: User):
     today = date.today().isoformat()
@@ -100,12 +117,8 @@ def _parse_matching_pairs(matching_pairs: Union[str, List, None]) -> Optional[Li
 
 def _question_to_out(question: Question, material: Material | None) -> QuestionOut:
     """Convert a Question ORM object to QuestionOut schema."""
-    # Parse options (handle JSON string or list)
     options = _parse_options(question.options)
-    
-    # Parse matching pairs
     pairs = _parse_matching_pairs(question.matching_pairs)
-
     return QuestionOut(
         id=question.id,
         question_text=question.question_text,
@@ -123,11 +136,11 @@ async def get_next_question(
     topic: Optional[str]=None,
     seen_ids: str = Query(default=""),
     review_mode: bool = Query(default=False),
-    question_type: Optional[str] = Query(default=None),  # filter by type
+    question_type: Optional[str] = Query(default=None),
     db: AsyncSession=Depends(get_db),
     current_user: User=Depends(get_current_user)
 ):
-    await ensure_badges(db)
+    await ensure_badges(db)  # now a near-zero-cost no-op after first call
 
     seen_id_list = [int(x) for x in seen_ids.split(",") if x.strip()] if seen_ids else []
 
@@ -145,33 +158,30 @@ async def get_next_question(
     if not questions:
         raise HTTPException(status_code=404, detail="No questions found.")
 
-    # Questions answered correctly at least once
-    permanently_correct = set()
-    for q in questions:
-        correct_attempt = await db.execute(
-            select(QuizAttempt)
-            .where(
-                QuizAttempt.user_id == current_user.id,
-                QuizAttempt.question_id == q.id,
-                QuizAttempt.is_correct == True
-            )
-            .limit(1)
+    question_ids = [q.id for q in questions]
+
+    # FIX: single bulk query to find all correctly answered question IDs
+    # instead of one query per question in a loop
+    correct_res = await db.execute(
+        select(QuizAttempt.question_id)
+        .where(
+            QuizAttempt.user_id == current_user.id,
+            QuizAttempt.is_correct == True,
+            QuizAttempt.question_id.in_(question_ids),
         )
-        if correct_attempt.first():
-            permanently_correct.add(q.id)
+        .distinct()
+    )
+    permanently_correct = {row[0] for row in correct_res.all()}
 
     if review_mode:
         pool = [q for q in questions if q.id not in seen_id_list]
         if not pool:
-            # All questions in this filter have been reviewed this session — cycle back
             pool = list(questions)
     else:
         pool = [q for q in questions if q.id not in permanently_correct and q.id not in seen_id_list]
         if not pool and len(permanently_correct) < len(questions):
-            # Unmastered questions remain but were all seen this session — reset seen for this type
             pool = [q for q in questions if q.id not in permanently_correct]
         if not pool:
-            # All questions for this filter are mastered — enter review mode cycling
             pool = [q for q in questions if q.id not in seen_id_list]
             if not pool:
                 pool = list(questions)
@@ -295,8 +305,6 @@ async def submit_open_answer(
     if question.question_type != "open_ended":
         raise HTTPException(status_code=400, detail="This endpoint is for open-ended questions only")
 
-    # Retrieve stored model answer and key_concepts
-    # Parse options if stored as JSON string
     options = _parse_options(question.options)
     model_answer = options[0] if options else question.explanation
     
@@ -317,7 +325,6 @@ async def submit_open_answer(
     is_correct = judgment.get("is_correct", False)
     score = float(judgment.get("score", 0.0))
 
-    # Check if already answered correctly
     existing_correct = await db.execute(
         select(QuizAttempt)
         .where(
@@ -341,7 +348,6 @@ async def submit_open_answer(
 
     xp_gained = 0
     if award_xp:
-        # Partial XP based on score
         xp_gained = round(XP_CORRECT * score) if score > 0 else XP_WRONG
         current_user.xp += xp_gained
         current_user.rank = get_rank(current_user.xp)
