@@ -10,6 +10,9 @@ GROQ_MODEL      = "llama-3.3-70b-versatile"
 GROQ_FAST_MODEL = "llama-3.1-8b-instant"
 
 
+# ─────────────────────────────────────────────────────────────
+# Helper
+# ─────────────────────────────────────────────────────────────
 def _clean(raw: str) -> str:
     return raw.replace("```json", "").replace("```", "").strip()
 
@@ -84,7 +87,7 @@ For Open-ended:
 
 Return a JSON array with exactly {num_questions} objects. Do not include any text outside the JSON array."""
 
-    raw = await _chat(prompt, fast=True)
+    raw = await _chat(prompt, fast=False)
     questions = json.loads(_clean(raw))
     
     # Validate and ensure all required fields are present
@@ -354,7 +357,7 @@ Rules:
 - Tone: encouraging, educational, not harsh
 - Return ONLY valid JSON, no markdown."""
 
-    raw = await _chat(prompt, fast=True)
+    raw = await _chat(prompt, fast=False)
     result = json.loads(_clean(raw))
     result.setdefault("correct_answer", model_answer)
     result.setdefault("explanation", explanation)
