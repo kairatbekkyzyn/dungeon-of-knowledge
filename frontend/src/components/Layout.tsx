@@ -3,14 +3,14 @@ import { useAuthStore } from '../store/authStore'
 import { useSound } from '../hooks/useSound'
 
 const nav = [
-  { to: '/',            label: 'World',    icon: '🗺️' },
-  { to: '/forge',       label: 'Forge',    icon: '⚒️' },
-  { to: '/monsters',    label: 'Monsters', icon: '👾' },
-  { to: '/stats',       label: 'Progress', icon: '📊' },
-  { to: '/profile',     label: 'Explorer', icon: '⚔️' },
-  { to: '/leaderboard',   label: 'Rankings', icon: '🏆' },
-  { to: '/competitions',  label: 'Arena',    icon: '⚡' },
-  { to: '/friends',       label: 'Guild',    icon: '🤝' },
+  { to: '/',             label: 'World',    icon: '🗺️' },
+  { to: '/forge',        label: 'Forge',    icon: '⚒️' },
+  { to: '/monsters',     label: 'Monsters', icon: '👾' },
+  { to: '/stats',        label: 'Progress', icon: '📊' },
+  { to: '/profile',      label: 'Explorer', icon: '⚔️' },
+  { to: '/leaderboard',  label: 'Rankings', icon: '🏆' },
+  { to: '/competitions', label: 'Arena',    icon: '⚡' },
+  { to: '/friends',      label: 'Guild',    icon: '🤝' },
 ]
 
 const RANK_COLORS: Record<string,string> = {
@@ -22,8 +22,8 @@ export default function Layout() {
   const navigate = useNavigate()
   const { playSound } = useSound()
 
-  const THEME_NEXT_ICON: Record<string, string> = { dark: '☀️', light: '🏰', dungeon: '🌙' }
-  const THEME_NEXT_LABEL: Record<string, string> = { dark: 'Light mode', light: 'Dungeon mode', dungeon: 'Dark mode' }
+  const THEME_NEXT_ICON: Record<string, string>  = { dark:'☀️', light:'🏰', dungeon:'🌙' }
+  const THEME_NEXT_LABEL: Record<string, string> = { dark:'Light mode', light:'Dungeon mode', dungeon:'Dark mode' }
   const rank      = user?.rank ?? 'Apprentice'
   const rankColor = RANK_COLORS[rank] ?? '#8a7060'
   const xpInLevel = (user?.xp ?? 0) % 100
@@ -32,33 +32,34 @@ export default function Layout() {
   return (
     <div style={{ display:'flex', height:'100vh', overflow:'hidden', background:'var(--bg)' }}>
 
-      {/* Sidebar */}
+      {/* ── Sidebar ── */}
       <aside style={{
-        width:200, display:'flex', flexDirection:'column', flexShrink:0,
+        width: 180, flexShrink: 0, display:'flex', flexDirection:'column',
         background:'var(--surface)', borderRight:'1px solid var(--border)',
       }}>
 
-        {/* Logo + theme toggle */}
+        {/* Logo + theme */}
         <div style={{
           display:'flex', alignItems:'center', justifyContent:'space-between',
           padding:'16px 14px', borderBottom:'1px solid var(--border)'
         }}>
-          <div style={{ display:'flex', alignItems:'center', gap:9 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
             <div style={{
-              width:30, height:30, borderRadius:8, flexShrink:0,
+              width:32, height:32, borderRadius:9, flexShrink:0,
               background:'linear-gradient(135deg, var(--cyan), #9b59b6)',
-              display:'flex', alignItems:'center', justifyContent:'center', fontSize:15
+              display:'flex', alignItems:'center', justifyContent:'center', fontSize:17
             }} className="torch">🏰</div>
             <span style={{
-              fontFamily:'Syne', fontSize:15, fontWeight:800,
+              fontFamily:'Syne', fontSize:17, fontWeight:800,
               color:'var(--text)', letterSpacing:'-0.02em'
             }}>ExamAI</span>
           </div>
-          <button onClick={() => { toggleTheme(); playSound('click', 0.65) }} title={THEME_NEXT_LABEL[theme]} style={{
-            width:28, height:28, borderRadius:7, border:'1px solid var(--border)',
-            background:'var(--surface2)', cursor:'pointer', fontSize:13,
-            display:'flex', alignItems:'center', justifyContent:'center', transition:'all 0.2s'
-          }}>
+          <button onClick={() => { toggleTheme(); playSound('click', 0.65) }}
+            title={THEME_NEXT_LABEL[theme]} style={{
+              width:30, height:30, borderRadius:8, border:'1px solid var(--border)',
+              background:'var(--surface2)', cursor:'pointer', fontSize:14,
+              display:'flex', alignItems:'center', justifyContent:'center'
+            }}>
             {THEME_NEXT_ICON[theme]}
           </button>
         </div>
@@ -69,29 +70,27 @@ export default function Layout() {
           background:'var(--surface2)', border:'1px solid var(--border)',
           borderRadius:12, padding:12
         }}>
-          <div style={{ display:'flex', alignItems:'center', gap:9 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
             <div style={{
-              width:32, height:32, borderRadius:9, flexShrink:0,
+              width:34, height:34, borderRadius:10, flexShrink:0,
               background:`linear-gradient(135deg, ${rankColor}30, rgba(155,89,182,0.2))`,
               border:`1.5px solid ${rankColor}50`,
-              display:'flex', alignItems:'center', justifyContent:'center', fontSize:15
+              display:'flex', alignItems:'center', justifyContent:'center', fontSize:17
             }}>⚔️</div>
             <div style={{ minWidth:0 }}>
               <p style={{
-                color:'var(--text)', fontSize:12, fontWeight:700,
+                color:'var(--text)', fontSize:13, fontWeight:700,
                 overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'
               }}>{user?.name}</p>
-              <p style={{ fontSize:10, color: rankColor, fontWeight:600 }}>{rank}</p>
+              <p style={{ fontSize:11, color: rankColor, fontWeight:600 }}>{rank}</p>
             </div>
           </div>
-
-          {/* XP bar */}
           <div style={{ marginTop:10 }}>
-            <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, color:'var(--text3)', marginBottom:4 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, color:'var(--text3)', marginBottom:4 }}>
               <span>Lv {level}</span>
               <span style={{ fontFamily:'JetBrains Mono' }}>{xpInLevel}/100</span>
             </div>
-            <div style={{ height:4, background:'var(--surface)', borderRadius:4, overflow:'hidden', border:'1px solid var(--border)' }}>
+            <div style={{ height:5, background:'var(--surface)', borderRadius:4, overflow:'hidden', border:'1px solid var(--border)' }}>
               <div style={{
                 height:'100%', borderRadius:4,
                 background:`linear-gradient(90deg, var(--cyan), #9b59b6)`,
@@ -99,17 +98,15 @@ export default function Layout() {
               }}/>
             </div>
           </div>
-
-          {/* Streak */}
           {(user?.streak_days ?? 0) > 0 && (
-            <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:8, fontSize:10, color:'#fb923c' }}>
-              🔥 <span>{user?.streak_days} day streak</span>
+            <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:8, fontSize:12, color:'#fb923c' }}>
+              🔥 <span>{user?.streak_days}d streak</span>
             </div>
           )}
         </div>
 
         {/* Nav */}
-        <nav style={{ display:'flex', flexDirection:'column', gap:2, padding:'10px 8px', flex:1 }}>
+        <nav style={{ display:'flex', flexDirection:'column', gap:3, padding:'10px 8px', flex:1, overflowY:'auto' }}>
           {nav.map(({ to, label, icon }) => (
             <NavLink key={to} to={to} end={to === '/'}
               onClick={() => playSound('click', 0.45)}
@@ -129,15 +126,15 @@ export default function Layout() {
                 <>
                   <span style={{
                     fontSize:28, lineHeight:1,
-                    opacity: isActive ? 1 : 0.4,
+                    opacity: isActive ? 1 : 0.5,
                     transition:'all 0.18s',
                     filter: isActive ? 'drop-shadow(0 0 6px rgba(232,160,48,0.5))' : 'none'
                   }}>{icon}</span>
                   <span style={{
-                    fontFamily:'Manrope', fontSize:10, fontWeight:700,
-                    letterSpacing:'0.03em', textAlign:'center',
+                    fontFamily:'Manrope', fontSize:12, fontWeight:700,
+                    letterSpacing:'0.02em', textAlign:'center',
                     color: isActive ? 'var(--cyan)' : 'var(--text)',
-                    opacity: isActive ? 1 : 0.45,
+                    opacity: isActive ? 1 : 0.6,
                     transition:'all 0.18s',
                   }}>{label}</span>
                 </>
@@ -150,9 +147,9 @@ export default function Layout() {
         <div style={{ padding:'8px 8px 14px', borderTop:'1px solid var(--border)' }}>
           <button onClick={() => { logout(); navigate('/login'); playSound('click', 0.7) }} style={{
             width:'100%', display:'flex', alignItems:'center', gap:8,
-            padding:'9px 12px', borderRadius:9, border:'none', cursor:'pointer',
-            background:'transparent', color:'var(--text2)', fontSize:12,
-            fontFamily:'Manrope', transition:'all 0.15s'
+            padding:'10px 12px', borderRadius:9, border:'none', cursor:'pointer',
+            background:'transparent', color:'var(--text2)', fontSize:13,
+            fontFamily:'Manrope', fontWeight:600, transition:'all 0.15s'
           }}
           onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.background='var(--surface2)'; el.style.color='var(--text)' }}
           onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.background='transparent'; el.style.color='var(--text2)' }}>
@@ -161,9 +158,9 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* Main */}
+      {/* ── Main content ── */}
       <main style={{ flex:1, overflowY:'auto', background:'var(--bg)' }}>
-        <div style={{ maxWidth:900, margin:'0 auto', padding:'32px 36px' }} className="anim-up">
+        <div style={{ width:'100%', maxWidth:1200, margin:'0 auto', padding:'32px 40px', boxSizing:'border-box' }} className="anim-up">
           <Outlet />
         </div>
       </main>
