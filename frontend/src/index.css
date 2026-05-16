@@ -277,6 +277,34 @@ input, textarea, select {
   font-size: 14px;
   transition: border-color 0.15s;
   outline: none;
+  width: 100%;
+  box-sizing: border-box;
+  display: block;
+}
+
+/* form field wrapper */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* label */
+.label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text2);
+  font-family: 'Manrope', sans-serif;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* card */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
 }
 input::placeholder, textarea::placeholder { color: var(--text3); }
 input:focus, textarea:focus, select:focus { border-color: var(--cyan); }

@@ -66,8 +66,11 @@ export default function Register() {
   }
 
   return (
-    <div style={{ background:'var(--bg)', minHeight:'100vh' }}
-         className="flex items-center justify-center p-4 relative overflow-hidden">
+    <div style={{
+      background:'var(--bg)', minHeight:'100vh',
+      display:'flex', alignItems:'center', justifyContent:'center',
+      padding:'24px', position:'relative', overflow:'hidden'
+    }}>
       <div style={{
         position:'absolute', top:'30%', left:'50%', transform:'translate(-50%,-50%)',
         width:700, height:500, borderRadius:'50%',
@@ -96,20 +99,20 @@ export default function Register() {
 
             {error && <ErrBox msg={error} />}
 
-            <form onSubmit={submitForm} style={{ display:'flex', flexDirection:'column', gap:15 }}>
-              <div>
-                <label className="label">Explorer Name</label>
-                <input className="input" type="text" placeholder="Alex the Brave"
+            <form onSubmit={submitForm} style={{ display:'flex', flexDirection:'column', gap:18 }}>
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                <label style={{ fontSize:12, fontWeight:700, color:'var(--text2)', fontFamily:'Manrope', letterSpacing:'0.05em', textTransform:'uppercase' }}>Explorer Name</label>
+                <input type="text" placeholder="Alex the Brave"
                   value={name} onChange={e => setName(e.target.value)} required />
               </div>
-              <div>
-                <label className="label">Email Address</label>
-                <input className="input" type="email" placeholder="you@university.edu"
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                <label style={{ fontSize:12, fontWeight:700, color:'var(--text2)', fontFamily:'Manrope', letterSpacing:'0.05em', textTransform:'uppercase' }}>Email Address</label>
+                <input type="email" placeholder="you@university.edu"
                   value={email} onChange={e => setEmail(e.target.value)} required />
               </div>
-              <div>
-                <label className="label">Password</label>
-                <input className="input" type="password" placeholder="Min. 6 characters"
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                <label style={{ fontSize:12, fontWeight:700, color:'var(--text2)', fontFamily:'Manrope', letterSpacing:'0.05em', textTransform:'uppercase' }}>Password</label>
+                <input type="password" placeholder="Min. 6 characters"
                   value={password} onChange={e => setPassword(e.target.value)}
                   required minLength={6} />
               </div>
