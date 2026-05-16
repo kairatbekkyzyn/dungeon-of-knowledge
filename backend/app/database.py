@@ -12,9 +12,17 @@ elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL
 is_postgres = "postgresql" in DATABASE_URL
 
 engine = create_async_engine(
-    DATABASE_URL, echo=False,
-    **({"pool_size":5,"max_overflow":10,"pool_pre_ping":True,"connect_args":{"ssl":"require"}}
-       if is_postgres else {})
+    DATABASE_URL,
+    echo=False,
+    **({
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_pre_ping": True,
+        "connect_args": {
+            "ssl": "require",
+            "statement_cache_size": 0,   # required for Supabase/PgBouncer transaction mode
+        }
+    } if is_postgres else {})
 )
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
