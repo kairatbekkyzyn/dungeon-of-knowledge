@@ -10,9 +10,6 @@ GROQ_MODEL      = "llama-3.3-70b-versatile"
 GROQ_FAST_MODEL = "llama-3.1-8b-instant"
 
 
-# ─────────────────────────────────────────────────────────────
-# Helper
-# ─────────────────────────────────────────────────────────────
 def _clean(raw: str) -> str:
     return raw.replace("```json", "").replace("```", "").strip()
 
@@ -87,7 +84,7 @@ For Open-ended:
 
 Return a JSON array with exactly {num_questions} objects. Do not include any text outside the JSON array."""
 
-    raw = await _chat(prompt, fast=False)
+    raw = await _chat(prompt, fast=True)
     questions = json.loads(_clean(raw))
     
     # Validate and ensure all required fields are present
@@ -111,19 +108,18 @@ Return a JSON array with exactly {num_questions} objects. Do not include any tex
         
         validated_questions.append(q)
     
-        # Final safety check - if no questions were generated, return a fallback
-        if not validated_questions:
-            # Create a fallback MCQ question
-            validated_questions = [{
-                "question": f"What is a key concept about {topic}?",
-                "options": ["Option A", "Option B", "Option C", "Option D"],
-                "correct_answer": 0,
-                "explanation": "Review the material to find the correct answer.",
-                "topic": topic,
-                "question_type": "mcq"
-            }]
-        
-        return validated_questions
+    # Final safety check - if no questions were generated, return a fallback
+    if not validated_questions:
+        validated_questions = [{
+            "question": f"What is a key concept about {topic}?",
+            "options": ["Option A", "Option B", "Option C", "Option D"],
+            "correct_answer": 0,
+            "explanation": "Review the material to find the correct answer.",
+            "topic": topic,
+            "question_type": "mcq"
+        }]
+    
+    return validated_questions
 
 # ─────────────────────────────────────────────────────────────
 # Legacy individual generators (kept for backward compatibility)
@@ -358,7 +354,7 @@ Rules:
 - Tone: encouraging, educational, not harsh
 - Return ONLY valid JSON, no markdown."""
 
-    raw = await _chat(prompt, fast=False)
+    raw = await _chat(prompt, fast=True)
     result = json.loads(_clean(raw))
     result.setdefault("correct_answer", model_answer)
     result.setdefault("explanation", explanation)
