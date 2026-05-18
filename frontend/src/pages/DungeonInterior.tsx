@@ -1008,62 +1008,226 @@ export default function DungeonInterior() {
     )
   }
 
-  // ── Dungeon Map ───────────────────────────────────────────────────────────
-  if (phase === 'map') return (
-    <div style={{ maxWidth: 640, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 28 }}>
-        <button onClick={() => navigate('/dungeons')} style={{ background: 'none', border: 'none', color: 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>← Dungeons</button>
-        <h1 style={{ fontFamily: 'Syne', fontSize: 22, fontWeight: 800, flex: 1 }}>{dungeon?.dungeon_title || 'Dungeon'}</h1>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {rooms.map((room, idx) => {
-          const isLocked   = !room.accessible
-          const isMastered = room.mastery >= 1.0
-          return (
-            <div key={room.topic} onClick={() => !isLocked && enterRoom(room)} style={{
-              borderRadius: 16, border: `2px solid ${isMastered ? 'rgba(80,200,120,0.3)' : isLocked ? 'var(--border)' : 'var(--border2)'}`,
-              background: isLocked ? 'rgba(255,255,255,0.01)' : 'var(--surface)',
-              padding: '18px 20px', cursor: isLocked ? 'not-allowed' : 'pointer',
-              opacity: isLocked ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 16,
-            }}>
-              <div style={{ width: 44, height: 44, borderRadius: 12, background: isMastered ? 'rgba(80,200,120,0.15)' : isLocked ? 'rgba(255,255,255,0.05)' : 'rgba(56,189,248,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>
-                {isMastered ? '✅' : isLocked ? '🔒' : '🚪'}
-              </div>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontFamily: 'Syne', fontWeight: 700, fontSize: 15, marginBottom: 6 }}>{room.topic}</p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden' }}>
-                    <div style={{ width: `${room.mastery * 100}%`, height: '100%', background: isMastered ? 'var(--emerald)' : 'var(--amber)', borderRadius: 2 }} />
-                  </div>
-                  <span style={{ fontSize: 11, color: 'var(--text2)', fontFamily: 'JetBrains Mono' }}>{Math.round(room.mastery * 100)}%</span>
-                </div>
-              </div>
-              <div>
-                {isMastered ? (
-                  <span style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6, background: 'rgba(80,200,120,0.12)', color: 'var(--emerald)' }}>✅ MASTERED · Review →</span>
-                ) : isLocked ? (
-                  <span style={{ fontSize: 13, color: 'var(--text3)' }}>🔒 70% needed</span>
-                ) : (
-                  <span style={{ fontSize: 13, color: 'var(--amber)' }}>Enter →</span>
-                )}
-              </div>
-            </div>
-          )
-        })}
+  // ── Dungeon Map (winding road) ────────────────────────────────────────────
+  if (phase === 'map') {
+    const masteredCount = rooms.filter(r => r.mastery >= 1.0).length
 
-        {bossUnlocked && (
-          <div onClick={() => navigate(`/dungeon/${id}/boss`)} style={{ borderRadius: 16, border: '2px solid rgba(192,57,43,0.4)', background: 'rgba(192,57,43,0.06)', padding: '18px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div style={{ fontSize: 40 }}>👹</div>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontFamily: 'Syne', fontWeight: 800, fontSize: 16, color: 'var(--red)' }}>BOSS ROOM — {dungeon?.dungeon_title} Guardian</p>
-              <p style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>All rooms mastered! The guardian awaits.</p>
+    // Build SVG stop positions: alternate left/right in a snake pattern
+    const SVG_W   = 340
+    const TOP_PAD = 72
+    const GAP     = 118
+    const LEFT_X  = SVG_W * 0.27
+    const RIGHT_X = SVG_W * 0.73
+    const stopPts = rooms.map((_, i) => ({
+      x: i % 2 === 0 ? LEFT_X : RIGHT_X,
+      y: TOP_PAD + i * GAP,
+    }))
+    // Boss node always centred below last room
+    const bossY   = TOP_PAD + rooms.length * GAP
+    const allPts  = bossUnlocked ? [...stopPts, { x: SVG_W / 2, y: bossY }] : stopPts
+    const totalH  = bossY + (bossUnlocked ? 100 : 50)
+
+    // Build a smooth SVG path through all points
+    const buildPath = (pts: {x:number;y:number}[]) => {
+      if (pts.length < 2) return ''
+      let d = `M ${pts[0].x} ${pts[0].y}`
+      for (let i = 1; i < pts.length; i++) {
+        const p = pts[i - 1], c = pts[i]
+        const cy = p.y + (c.y - p.y) * 0.5
+        d += ` C ${p.x} ${cy}, ${c.x} ${cy}, ${c.x} ${c.y}`
+      }
+      return d
+    }
+    const roadPath      = buildPath(allPts)
+    const completedPath = masteredCount > 0 ? buildPath(stopPts.slice(0, masteredCount + 1)) : ''
+
+    return (
+      <div style={{ maxWidth: 520, margin: '0 auto' }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+          <button onClick={() => navigate('/dungeons')} style={{ background: 'none', border: 'none', color: 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>← Dungeons</button>
+          <h1 style={{ fontFamily: 'Syne', fontSize: 20, fontWeight: 800, flex: 1 }}>{dungeon?.dungeon_title || 'Dungeon'}</h1>
+        </div>
+
+        {/* Road map card */}
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, overflow: 'hidden', paddingBottom: 24 }}>
+          {/* Progress bar header */}
+          <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.09em', color: 'var(--text2)', fontFamily: 'JetBrains Mono' }}>
+                Room Progress
+              </span>
+              <span style={{ fontSize: 12, fontFamily: 'JetBrains Mono', fontWeight: 700, color: 'var(--amber)' }}>
+                {masteredCount}/{rooms.length}
+              </span>
             </div>
-            <span style={{ fontSize: 20, color: 'var(--red)' }}>⚔️</span>
+            <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 5, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', borderRadius: 5,
+                width: `${rooms.length > 0 ? (masteredCount / rooms.length) * 100 : 0}%`,
+                background: masteredCount === rooms.length ? 'var(--emerald)' : 'linear-gradient(90deg, var(--amber), var(--cyan))',
+                transition: 'width 1s ease',
+              }}/>
+            </div>
           </div>
-        )}
+
+          {/* SVG Road */}
+          <svg
+            viewBox={`0 0 ${SVG_W} ${totalH}`}
+            width="100%"
+            style={{ display: 'block', overflow: 'visible' }}
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <defs>
+              <pattern id="di-dots" x="0" y="0" width="22" height="22" patternUnits="userSpaceOnUse">
+                <circle cx="2" cy="2" r="1.2" fill="rgba(255,255,255,0.025)"/>
+              </pattern>
+              <filter id="di-glow">
+                <feGaussianBlur stdDeviation="3.5" result="blur"/>
+                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+            <rect width={SVG_W} height={totalH} fill="url(#di-dots)"/>
+
+            {/* Road: shadow → asphalt → centre dashes */}
+            <path d={roadPath} fill="none" stroke="rgba(0,0,0,0.5)" strokeWidth={24} strokeLinecap="round" strokeLinejoin="round"/>
+            <path d={roadPath} fill="none" stroke="#1a1e30" strokeWidth={20} strokeLinecap="round" strokeLinejoin="round"/>
+            <path d={roadPath} fill="none" stroke="rgba(255,220,80,0.2)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="14 18"/>
+
+            {/* Green glow for completed portion */}
+            {completedPath && (
+              <path d={completedPath} fill="none" stroke="rgba(80,200,120,0.5)" strokeWidth={6} strokeLinecap="round" filter="url(#di-glow)"/>
+            )}
+
+            {/* START label */}
+            {stopPts[0] && (
+              <text x={stopPts[0].x} y={TOP_PAD - 34} textAnchor="middle" fill="rgba(255,255,255,0.18)"
+                style={{ fontSize: 10, fontFamily: 'JetBrains Mono', fontWeight: 700 }}>
+                ▼ START
+              </text>
+            )}
+
+            {/* Room stop nodes */}
+            {rooms.map((room, i) => {
+              const { x, y }   = stopPts[i]
+              const isLocked   = !room.accessible
+              const isMastered = room.mastery >= 1.0
+              const isActive   = room.state === 'in_progress'
+              const nodeSize   = 56
+              const r          = (nodeSize - 8) / 2
+              const circ       = 2 * Math.PI * r
+              const ringColor  = isMastered ? '#10b981' : isActive ? '#f59e0b' : 'rgba(255,255,255,0.08)'
+              const glowColor  = isMastered ? 'rgba(16,185,129,0.5)' : isActive ? 'rgba(245,158,11,0.4)' : 'transparent'
+              const icon       = isMastered ? '✅' : isLocked ? '🔒' : '🚪'
+              const bgFill     = isMastered ? '#065f46' : isActive ? '#92400e' : isLocked ? '#12131f' : '#1e2440'
+              const border     = isMastered ? 'rgba(16,185,129,0.6)' : isActive ? 'rgba(245,158,11,0.6)' : 'rgba(255,255,255,0.1)'
+              const label      = room.topic.length > 18 ? room.topic.slice(0, 16) + '…' : room.topic
+              const pct        = Math.round(room.mastery * 100)
+
+              return (
+                <g key={room.topic} onClick={() => !isLocked && enterRoom(room)}
+                  style={{ cursor: isLocked ? 'not-allowed' : 'pointer', opacity: isLocked ? 0.45 : 1 }}>
+                  {/* Glow blob */}
+                  {!isLocked && (
+                    <circle cx={x} cy={y} r={nodeSize / 2 + 10} fill={glowColor} style={{ filter: 'blur(10px)' }}/>
+                  )}
+                  {/* Mastery ring bg */}
+                  <circle cx={x} cy={y} r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={5}/>
+                  {/* Mastery ring fill */}
+                  <circle cx={x} cy={y} r={r} fill="none" stroke={ringColor} strokeWidth={5}
+                    strokeDasharray={circ} strokeDashoffset={circ * (1 - room.mastery)}
+                    strokeLinecap="round" transform={`rotate(-90 ${x} ${y})`}
+                    style={{ transition: 'stroke-dashoffset 1s ease 0.2s' }}/>
+                  {/* Circle body */}
+                  <circle cx={x} cy={y} r={nodeSize / 2 - 5} fill={bgFill}
+                    stroke={border} strokeWidth={2}/>
+                  {/* Emoji */}
+                  <text x={x} y={y + 7} textAnchor="middle" style={{ fontSize: 18 }}>{icon}</text>
+                  {/* Step badge */}
+                  <circle cx={x + nodeSize / 2 - 2} cy={y - nodeSize / 2 + 2} r={10}
+                    fill="var(--bg, #0f1117)" stroke="rgba(255,255,255,0.15)" strokeWidth={1}/>
+                  <text x={x + nodeSize / 2 - 2} y={y - nodeSize / 2 + 6} textAnchor="middle"
+                    fill="rgba(255,255,255,0.5)"
+                    style={{ fontSize: 9, fontFamily: 'JetBrains Mono', fontWeight: 700 }}>
+                    {i + 1}
+                  </text>
+                  {/* Label card */}
+                  <foreignObject x={x - 66} y={y + nodeSize / 2 + 5} width={132} height={46}>
+                    <div style={{
+                      background: 'rgba(12,14,22,0.88)',
+                      border: `1px solid ${isMastered ? 'rgba(16,185,129,0.3)' : isActive ? 'rgba(245,158,11,0.3)' : 'rgba(255,255,255,0.07)'}`,
+                      borderRadius: 9, padding: '4px 8px', backdropFilter: 'blur(8px)', textAlign: 'center',
+                    }}>
+                      <div style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: 10.5, color: '#e2e8f0', lineHeight: 1.3, marginBottom: 1 }}>{label}</div>
+                      <div style={{
+                        fontFamily: 'JetBrains Mono, monospace', fontSize: 9.5,
+                        color: isMastered ? '#10b981' : isActive ? '#f59e0b' : isLocked ? '#4a5568' : '#8892a4',
+                      }}>
+                        {isMastered ? '✓ mastered' : isLocked ? '🔒 locked' : `${pct}%`}
+                      </div>
+                    </div>
+                  </foreignObject>
+                </g>
+              )
+            })}
+
+            {/* Boss node */}
+            {bossUnlocked && (
+              <g onClick={() => navigate(`/dungeon/${id}/boss`)} style={{ cursor: 'pointer' }}>
+                {/* Radar pulse rings */}
+                <circle cx={SVG_W / 2} cy={bossY} r={36}
+                  fill="none" stroke="rgba(192,57,43,0.45)" strokeWidth={2}
+                  style={{ animation: 'radar 1.8s ease-out infinite' }}/>
+                <circle cx={SVG_W / 2} cy={bossY} r={46}
+                  fill="none" stroke="rgba(192,57,43,0.2)" strokeWidth={1.5}
+                  style={{ animation: 'radar 1.8s ease-out infinite', animationDelay: '0.6s' }}/>
+                {/* Glow */}
+                <circle cx={SVG_W / 2} cy={bossY} r={44} fill="rgba(192,57,43,0.35)" style={{ filter: 'blur(14px)' }}/>
+                {/* Ring */}
+                <circle cx={SVG_W / 2} cy={bossY} r={30} fill="none" stroke="rgba(192,57,43,0.5)" strokeWidth={5}/>
+                {/* Body */}
+                <circle cx={SVG_W / 2} cy={bossY} r={25} fill="#5c0a0a" stroke="rgba(192,57,43,0.8)" strokeWidth={2}/>
+                {/* Boss emoji */}
+                <text x={SVG_W / 2} y={bossY + 9} textAnchor="middle" style={{ fontSize: 24 }}>👹</text>
+                {/* Label */}
+                <text x={SVG_W / 2} y={bossY + 46} textAnchor="middle" fill="#ef4444"
+                  style={{ fontSize: 11, fontFamily: 'JetBrains Mono', fontWeight: 700 }}>
+                  ⚡ BOSS BATTLE
+                </text>
+                <text x={SVG_W / 2} y={bossY + 60} textAnchor="middle" fill="rgba(239,68,68,0.5)"
+                  style={{ fontSize: 9, fontFamily: 'JetBrains Mono' }}>
+                  {dungeon?.dungeon_title} Guardian
+                </text>
+              </g>
+            )}
+
+            {/* Finish flag */}
+            {!bossUnlocked && (
+              <text x={SVG_W / 2} y={totalH - 8} textAnchor="middle"
+                fill="rgba(255,255,255,0.1)"
+                style={{ fontSize: 10, fontFamily: 'JetBrains Mono', fontWeight: 700 }}>
+                🏁 COMPLETE ALL ROOMS TO UNLOCK BOSS
+              </text>
+            )}
+          </svg>
+
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap', padding: '0 20px' }}>
+            {[
+              { color: '#10b981', label: 'Mastered' },
+              { color: '#f59e0b', label: 'In progress' },
+              { color: '#4a5568', label: 'Locked' },
+            ].map(({ color, label }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: color }}/>
+                <span style={{ fontSize: 11, color: 'var(--text2)', fontFamily: 'JetBrains Mono' }}>{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   // ── Quiz screen ───────────────────────────────────────────────────────────
   const answered = !!(result || openResult)
